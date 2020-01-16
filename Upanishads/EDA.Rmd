@@ -1,0 +1,240 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+library(ggplot2)
+library(tm)
+library(dplyr)
+library(tidyr)
+library(ggwordcloud)
+library(GGally)
+library(SentimentAnalysis)
+library(syuzhet)
+library(directlabels)
+library(udpipe)
+```
+
+```{r}
+bgcolor <- "#1b2a49"
+linecolor <- "#c9d1d3"
+textcolor <- "#ffd369"
+axiscolor <- "#4658810f"
+titletextcolor <- "#6fb98f"
+bgrect <- element_rect(fill=bgcolor)
+axistext <- element_text(color=textcolor)
+titletext <- element_text(color = titletextcolor)
+mtheme <- ggplot2::theme(plot.background = bgrect,
+                          panel.background = bgrect,
+                          panel.grid.major = element_line(color=axiscolor),
+                         panel.grid.minor =  element_line(color=axiscolor),
+                         axis.text.x = axistext,
+                         axis.text.y = axistext,
+                         axis.title = titletext , 
+                         legend.background = bgrect,
+                         legend.text =  axistext,
+                         legend.title = titletext
+                         )
+```
+
+```{r}
+
+
+fileToCorpus <- function(filepath){
+  text <- readChar(filepath , file.info(filepath)$size)
+  corpus <- Corpus(VectorSource(c(text)))
+    a <- tm_map(corpus, removeNumbers)
+    a <- tm_map(a, removePunctuation)
+    a <- tm_map(a , stripWhitespace)
+    a <- tm_map(a, tolower)
+    a <- tm_map(a, removeWords, stopwords("english"))
+    a
+}
+
+#Corpus(SimpleSource("./Data/Upanishads.txt" , length = 1,reader = readPlain(elem=, language = "en")))
+paths <- list("./Data/Upanishads.txt" , "./Data/bible.txt" , "./Data/Quran.txt")
+uc <- fileToCorpus("./Data/Upanishads.txt")
+bc <- fileToCorpus("./Data/bible.txt")
+qc <- fileToCorpus("./Data/Quran.txt")
+
+corpuses <- list(uc , bc , qc)
+labels <- c("Upanishad" , "Bible" , "Quran")
+```
+
+```{r}
+summary(uc)
+```
+
+```{r}
+
+corpusToTM <- function(corpus){
+ # this stopword file is at C:\Users\[username]\Documents\R\win-library\2.13\tm\stopwords 
+    #a <- tm_map(a, stemDocument, language = "english")
+    adtm <-DocumentTermMatrix(corpus) 
+    adtm <- removeSparseTerms(adtm, 0.75)
+    adtm
+}
+
+ucdtm <- corpusToTM(uc)
+bcdtm <- corpusToTM(bc)
+dtmses <- lapply(corpuses , corpusToTM)
+```
+
+```{r}
+getWordFreqs  <- function (dtm , num=50){
+  df <- findMostFreqTerms(dtm  , 50) %>% as.data.frame()
+  df$words <- rownames(df)
+  colnames(df) <- c("freq" , "word")
+  df
+}
+```
+
+```{r}
+ufw <- getWordFreqs(ucdtm , 100)
+bfw <- getWordFreqs(bcdtm , 100)
+ufw
+
+wordfreqs <- lapply(dtmses, getWordFreqs)
+```
+
+
+```{r}
+
+getWordCloud <- function(wordFreqDf){
+  p <- ggplot(data = wordFreqDf , aes(label= word , 
+                                      size = freq ,
+                                      color = freq)) + 
+    geom_text_wordcloud(shape="square") +
+  scale_size_area(max_size = 10) +
+  scale_radius(range = c(0, 20), limits = c(0, NA))  +mtheme
+  
+  print(p)
+}
+
+```
+
+```{r}
+sapply( wordfreqs , getWordCloud)
+```
+
+
+```{r}
+
+applyTo <- function(listoi , labels , func){
+  stms <-  list()
+  for(i in seq_along( listoi) ) {
+   # print(i )
+   stm <- func(listoi[[i]]) %>% as.data.frame()
+   stm$book <- labels[i]
+   stms[[i]] <- stm
+  }
+  nstm <- do.call(rbind , stms)
+  nstm
+}
+
+sentimentPlot <- function(dtms , labels){
+  
+  nstm <- applyTo(dtms , labels , SentimentAnalysis::analyzeSentiment)
+  
+  p <- ggplot(data = nstm %>% gather(key="sentiment" , value="score" , -WordCount , -book),
+       aes(x = sentiment , y =score,  fill=book)) + 
+        geom_bar(stat = "identity" , position="dodge") + 
+        coord_flip() + mtheme
+
+  print(p)
+}
+
+```
+
+
+```{r}
+sentimentPlot(dtmses , labels)
+```
+
+```{r}
+sentiments <- applyTo(corpuses , labels , function(c){ syuzhet::get_nrc_sentiment(sapply(c , identity)) })
+#sentiments[, names(sentiments) != "book"] <- apply(sentiments[, names(sentiments) != "book"] ,1 ,scales::rescale,to=c(0,2))
+```
+
+
+```{r fig.width=12}
+
+ggplot(data = sentiments %>% gather(key="sentiment" , value="score"  , -book) ,
+       aes(x = book , y =score,  fill=sentiment)) + 
+        geom_bar(stat = "identity" , position="fill") +
+        geom_text(aes(label=sentiment) ,color="darkblue", position = position_fill(vjust = 0.5) , size=3 ,angle=45)+
+        scale_y_continuous(labels = scales::percent_format()) +
+        scale_fill_brewer(palette = "Set3") +
+        coord_flip() +  mtheme + theme(legend.position="none")
+ 
+
+```
+
+
+# POS Tags
+
+```{r}
+ud_model <- udpipe_download_model(language = "english")
+ud_model <- udpipe_load_model(ud_model$file_model)
+```
+
+
+```{r}
+allDocs <- sapply(paths , function(path) { readChar(path , file.info(path)$size) }) 
+
+allSents <- list()
+for(i in seq_along(allDocs)){
+  sents <-  strsplit(allDocs[[i]] , "\r\n") %>% as.data.frame()
+  sents$book <- labels[[i]]
+  colnames(sents) <- c("sent" , "book")
+  sents$sent <- as.character(sents$sent)
+  allSents[[i]] <- sents
+}
+
+allSentsDf <- do.call(rbind , allSents)
+```
+
+```{r}
+
+filteredDf <- allSentsDf[ grep("\\," , allSentsDf$sent) , ]
+x <- udpipe_annotate(ud_model, x = filteredDf$sent, doc_id = paste(seq(1:length(filteredDf$sent)) , filteredDf$book)) 
+x <- as.data.frame(x)
+
+write.csv(x , "./Data/bookPOS.csv")
+```
+
+
+
+```{r}
+
+book_id <- sub("\\d+" , "" , x$doc_id)
+x$book_id <- book_id
+x$book_id <- as.factor(x$book_id)
+
+
+
+library(doBy)
+poscounts <- x %>% group_by(book_id , token , upos) %>% summarize(counts = scale(n()))
+
+poscounts <- poscounts %>% group_by(book_id , token , upos) %>% mutate(scaled_counts = scale(counts))
+poscounts <- poscounts %>% scaleBy(counts ~ book_id)
+poscounts %>% pull("upos") %>% unique()
+```
+
+```{r}
+nouncounts <- poscounts %>% filter(upos == "PRON")
+ggplot(data = nouncounts , aes( x = scaled_count)) + geom_histogram()
+```
+
+```{r}
+
+ggplot(data = nouncounts %>% filter(counts > 100) , aes(x= token  , y = scaled_count , fill = book_id)) + 
+  geom_bar(stat = "identity" , position = "dodge") +
+  coord_flip()
+```
+

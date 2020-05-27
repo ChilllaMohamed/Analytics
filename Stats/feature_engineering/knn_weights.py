@@ -7,96 +7,102 @@ import numpy as np
 from scipy.optimize import minimize , fmin_cg , fmin
 from sklearn.metrics import hinge_loss , log_loss , confusion_matrix , accuracy_score , roc_auc_score
 from plotnine import *
+from sklearn.metrics.pairwise import pairwise_distances
 from sklearn.neighbors import KNeighborsClassifier
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.preprocessing import LabelEncoder
+from sklearn.datasets import load_breast_cancer
 import logging
 
+from sklearn.model_selection import train_test_split
 logging.basicConfig(level=logging.INFO)
+
 
 class Experiment:
 
     def Run(self):
         logging.info("Creating Dataset")
         ninfo = 5
-        X,y = make_classification(n_samples=100,class_sep=0.8, n_features=20,n_informative=ninfo ,n_redundant=0, n_classes=2)
+        X,y = make_classification(n_samples=300,
+                                    n_features=ninfo,
+                                    n_classes=2)
 
-        df = pd.DataFrame(X , columns=[f"x{i+1}" for i  in range(X.shape[1]) ])
-        df["y"] = y
-        #
-        # from plotnine import *
-        #
-        # for i,x1 in enumerate(df.columns):
-        #     for j,x2 in enumerate(df.columns):
-        #         if j > i and (x1 != "y" and x2 != "y"):
-        #             #print(x1,x2)
-        #             p = ggplot(df , aes(x=x1 , y=x2 , color="y")) + geom_point()
-        #             print(p)
-
+        #np.random.seed(100)
+        E = np.random.normal(0, 1, size=(len(X), 10))
+        X = np.hstack((X, E))
+        print(X.shape)
 
         weights = np.zeros(X.shape[1])
         k = 5
-        kdf = df.copy()
 
-        def knnWeights(weights , kdf , k):
-            df = kdf.copy()
-            epsi = 0.0001
-            df["predicted"] = 1
-            indepCols = df.drop(["y" , "predicted"] ,axis=1).columns
-            distmat = np.ones((df.shape[0],df.shape[0]))*10000
-            for a,rowa in df.iterrows():
-                for b,rowb in df.iterrows():
-                    if a == b:
-                        continue
-                    #print(weights,rowa , rowb)
-                    dist = 0
-                    for i,col in enumerate(indepCols):
-                        dist += weights[i]*np.abs(rowa[col]-rowb[col])
+        def knnWeights(weights , X,y , k):
 
-                    distmat[a,b] = dist
+            def dist(a,b):
+                return np.sum(np.multiply(weights, np.abs(a-b)))
 
-                kneighbors = np.argpartition(distmat[a], k)[:k]
-                #print(distmat[a,kneighbors])
-                #counts = np.bincount(df.iloc[kneighbors,:]["y"])
-                #classMaj = np.argmax(counts)
-                ys = df.iloc[kneighbors,:]["y"]
-                prob = len(ys[ys==1])/k
-                #print(prob)
-                df.loc[a,"predicted"] = prob
+            distMat = pairwise_distances(X,metric=dist)
+            kneighbors = np.argsort(distMat , axis=1)[:,1:k+1]
 
-            #loss = -1*hinge_loss(df["y"] , df["predicted"])
-            #loss = 1-accuracy_score(df["y"] , df["predicted"])
-            loss = -log_loss(df["y"] , df["predicted"])
-            #print(loss,confusion_matrix(df["y"] , df["predicted"]))
-            print(loss)
+            # don't do probability because its a bad estimation to begin with
+            #probs = np.count_nonzero(y[kneighbors] == 1 , axis=1)/k
+            pred = np.round(np.sum(y[kneighbors] , axis=1)/k)
+            #loss = 1-roc_auc_score(y,probs) #+ np.linalg.norm(weights , ord=2)
+            loss = 1-accuracy_score(y,pred)
+            #loss = log_loss(y,probs)
             return loss
 
         logging.info("Learning Feature Weights")
-        lweights = fmin(knnWeights , weights ,args=(df,k) ,maxiter=10, disp=True)
 
+        Xtrain,X_test,y_train,y_test = train_test_split(X,y)
 
+        #lweights = fmin(knnWeights , weights ,args=(df,k) ,maxiter=10, disp=True)
+        lweights = minimize(knnWeights , weights ,args=(Xtrain,y_train,k) ,options={"maxiter":10})
+        lweights = lweights.x
+        print(lweights)
         logging.info("Calculating Performance")
 
-        knn = KNeighborsClassifier(n_neighbors=k)
+        knn = KNeighborsClassifier()
 
-        knn.fit(X,y)
+        knn.fit(Xtrain,y_train)
 
+        #print(rfc.feature_importances_)
         #confusion_matrix(y,knn.predict(X))
 
-        woa = accuracy_score(y , knn.predict(X))
-        woauc = roc_auc_score(y, knn.predict_proba(X)[:,1])
+        woa = accuracy_score(y_test, knn.predict(X_test))
+        woauc = roc_auc_score(y_test, knn.predict_proba(X_test)[:,1])
 
-        indices = np.argsort( np.abs(lweights))[-ninfo:]
-        subX = X[:,indices]
-        knn.fit(subX,y)
+        randomIndices = np.random.choice(len(lweights) , ninfo,replace =False)
 
-        #confusion_matrix(y,knn.predict(subX))
+        selectedIndices = np.argsort( np.abs(lweights))[-ninfo:]
+        print(randomIndices, selectedIndices)
+        accs = []
+        aucs = []
+        for indices in [randomIndices , selectedIndices]:
+            #indices = np.argsort( np.abs(lweights))[:ninfo]
+            subX = Xtrain[:,indices]
 
-        wa = accuracy_score(y , knn.predict(subX))
-        wauc = roc_auc_score(y, knn.predict_proba(subX)[:,1])
+            def dist(a,b):
+                return np.sum(np.multiply(lweights[indices], np.abs(a-b)))
 
-        rdf = pd.DataFrame({"woa":[woa] , "woauc":[woauc] , "wa":[wa] , "wauc":[wauc]})
+            knn = KNeighborsClassifier(metric = dist)
+            knn.fit(subX,y_train)
+
+            #confusion_matrix(y,knn.predict(subX))
+            subtestX = X_test[:,indices]
+            wa = accuracy_score(y_test , knn.predict(subtestX))
+            wauc = roc_auc_score(y_test, knn.predict_proba(subtestX)[:,1])
+            accs.append(wa)
+            aucs.append(wauc)
+
+        rdf = pd.DataFrame({ "rfa":[accs[0]] , "rfauc":[aucs[0]],"woa":[woa] , "woauc":[woauc] , "wa":[accs[1]] , "wauc":[aucs[1]]})
 
         return rdf
 
 
 
 dfs = [Experiment().Run() for i in range(10)]
+
+d = pd.concat(dfs)
+d
+
+d.describe()

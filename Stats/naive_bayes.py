@@ -31,6 +31,8 @@ class NaiveBayes():
             params = zip(estimatedMeans , estimatedStd)
             # Here is one assumption
             # Numerical Variables are assumed to be normal , or any other distribution
+            # Normal is WRONG! because probabilities can't be negative
+            # but what the hell
             dist = [norm(u,s) for u,s in params]
             dists[yval] = dist
 

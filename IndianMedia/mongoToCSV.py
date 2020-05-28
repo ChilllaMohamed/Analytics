@@ -19,6 +19,9 @@ for vid in collection.find():
 
     #print(vid)
     info = vid["items"][0] if typeList else vid
+
+    #stats = info["statistics"]
+
     info = info["snippet"]
 
     channelId = Channels.reverseLookup(info["channelId"])
@@ -26,6 +29,11 @@ for vid in collection.find():
     title = info["title"]
     desc = info["description"]
     date = info["publishedAt"]
+    # stat_view = stats["viewCount"]
+    # stat_like = stats["likeCount"]
+    # stat_dislike = stats["dislikeCount"]
+    # stat_comment = stats["commentCount"]
+
     rows.append([channelId,ptitle,date,title,desc])
 
     #if ('items' in vid and len( vid["items"]) > 0) or vid["kind"].lower().find("playlistitem") > -1:
@@ -35,7 +43,7 @@ for vid in collection.find():
 dir = getCurrentDIR()
 f = os.path.abspath(os.path.join(dir , "text.csv"))
 
-header = ["Channel Id" , "Playlist Title" , "Date" , "Title" , "Description"]
+header = ["Channel Id" , "Playlist Title" , "Date" , "Title" , "Description" , "Views" , "Likes" , "Dislikes" , "Comment"]
 
 with open(f,"w" , encoding="utf-8", newline='') as fobj:
     writer = csv.writer(fobj)
